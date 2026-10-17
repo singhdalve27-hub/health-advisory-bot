@@ -1,84 +1,79 @@
 import os
-import chromadb
-import torch
-from transformers import AutoTokenizer, AutoModel
-from dotenv import load_dotenv
-from google import genai
-from google.genai import types
+import sys
+import warnings
 
-def embed_query(text, model_name='sentence-transformers/all-MiniLM-L6-v2'):
-    """Generates an embedding for the query."""
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name)
-    
-    inputs = tokenizer([text], padding=True, truncation=True, return_tensors="pt", max_length=512)
-    
-    with torch.no_grad():
-        outputs = model(**inputs)
-        
-    attention_mask = inputs['attention_mask']
-    token_embeddings = outputs[0]
-    input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-    sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
-    sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-    embeddings = sum_embeddings / sum_mask
-    
-    return embeddings.tolist()
+# Suppress noisy library warnings
+warnings.filterwarnings("ignore")
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+from src.rag_chain import HealthAdvisoryRAG, FALLBACK_REFUSAL_MESSAGE
 
 def main():
-    load_dotenv()
-    
-    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    db_path = os.path.join(base_dir, 'data', 'chroma_db')
+    print("=================================================================")
+    print("   Philippine DOH Health-Advisory Assistant (CLI Mode)           ")
+    print("   Orchestrated with LangChain, ChromaDB & Gemini 3.8 Flash      ")
+    print("=================================================================")
+    print("Commands:")
+    print("  'exit' or 'quit'  : Exit application")
+    print("  'clear'           : Reset conversational memory")
+    print("  'sources'         : Toggle showing retrieved context chunks")
+    print("=================================================================\n")
 
-    print("Connecting to ChromaDB...")
-    chroma_client = chromadb.PersistentClient(path=db_path)
-    collection = chroma_client.get_collection(name='doh_health_advisories')
-    
-    print("Connecting to Gemini API...")
-    gemini_client = genai.Client() 
-    
-    system_instruction = (
-        "You are a helpful and accurate DOH Health-Advisory Assistant. "
-        "Answer the user's question using ONLY the information provided in the context below. "
-        "If the answer cannot be found in the context, respond exactly with: 'I don't have enough information to answer that based on the DOH manual.' "
-        "Do not use any outside knowledge. Always cite the specific disease or section if available in the context."
-    )
+    try:
+        rag = HealthAdvisoryRAG()
+    except Exception as e:
+        print(f"Error initializing RAG application: {e}")
+        sys.exit(1)
 
-    print("\n=======================================================")
-    print(" Health-Advisory Bot is ready! Type 'exit' to quit.")
-    print("=======================================================")
+    show_sources = False
+    print("Assistant is ready! Ask any health question based on DOH advisories.\n")
 
     while True:
-        user_query = input("\n👤 You: ")
-        
-        if user_query.lower() in ['exit', 'quit']:
-            print("🤖 Health-Advisory Bot: Stay safe and healthy!")
+        try:
+            user_input = input("You: ").strip()
+        except (KeyboardInterrupt, EOFError):
+            print("\nExiting. Stay safe and healthy!")
             break
-            
-        if not user_query.strip():
+
+        if not user_input:
             continue
 
-        query_embedding = embed_query(user_query)
-        results = collection.query(
-            query_embeddings=query_embedding,
-            n_results=4
-        )
-        
-        retrieved_context = "\n\n".join(results['documents'][0])
+        if user_input.lower() in ["exit", "quit"]:
+            print("Health-Advisory Assistant: Stay safe and healthy! Goodbye.")
+            break
 
-        try:
-            response = gemini_client.models.generate_content(
-                model='gemini-3.6-flash',
-                contents=f"<context>\n{retrieved_context}\n</context>\n\nQuestion: {user_query}",
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.0
-                )
-            )
-            print(f"\n🤖 Health-Advisory Bot:\n{response.text}")
-        except Exception as e:
-            print(f"\n🤖 Health-Advisory Bot: Oops, an error occurred: {e}")
+        if user_input.lower() == "clear":
+            rag.clear_memory()
+            print("[System] Conversational memory cleared.\n")
+            continue
+
+        if user_input.lower() == "sources":
+            show_sources = not show_sources
+            print(f"[System] Source citation display set to: {show_sources}\n")
+            continue
+
+        print("\nSearching DOH advisories & generating answer...")
+        result = rag.ask(user_input)
+
+        if result["standalone_query"] != user_input:
+            print(f"[Memory / Rephrased Query]: \"{result['standalone_query']}\"")
+
+        print(f"\nHealth-Advisory Assistant:\n{result['answer']}")
+
+        if result.get("is_refusal"):
+            print("\n[Guardrail Alert]: Query is out-of-scope or unverified in DOH manual; safe fallback triggered.")
+
+        if show_sources and result.get("sources"):
+            print("\n--- Retrieved DOH Context Sources ---")
+            for idx, src in enumerate(result["sources"]):
+                doc_name = src["metadata"].get("source", "DOH Manual")
+                chunk_id = src["metadata"].get("chunk_id", f"chunk_{idx}")
+                score = src.get("similarity_score", "N/A")
+                print(f"[{idx+1}] Source: {doc_name} | {chunk_id} | Similarity: {score}")
+                snippet = src["content"][:160].replace("\n", " ")
+                print(f"    Excerpt: {snippet}...\n")
+
+        print("-" * 65)
 
 if __name__ == "__main__":
     main()
