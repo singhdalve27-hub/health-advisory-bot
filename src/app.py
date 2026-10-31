@@ -93,7 +93,12 @@ rag = load_rag_engine()
 
 # ----------------- SIDEBAR -----------------
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/c/cd/Department_of_Health_%28DOH%29.svg/240px-Department_of_Health_%28DOH%29.svg.png", width=110)
+    st.markdown("""
+    <div style="text-align: center; padding: 10px 0;">
+        <span style="font-size: 3.5rem;">🏥</span>
+        <h3 style="margin-top: 5px; color: #0d47a1; font-weight: 700;">DOH Assistant</h3>
+    </div>
+    """, unsafe_allow_html=True)
     st.title("System Controls")
     
     # Live Vector Store Stats
