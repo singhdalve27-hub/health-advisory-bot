@@ -2,3 +2,7 @@
 __pycache__/
 data/chroma_db/
 venv/
+.venv/
+*.pyc
+*.pyo
+.github/
