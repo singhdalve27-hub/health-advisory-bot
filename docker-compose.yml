@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  health-advisory-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: health-advisory-assistant
+    ports:
+      - "8501:8501"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - PORT=8501
+    env_file:
+      - .env
+    volumes:
+      - ./data/chroma_db:/app/data/chroma_db
+    restart: unless-stopped
+
